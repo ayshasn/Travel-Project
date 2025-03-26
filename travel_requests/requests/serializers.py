@@ -80,17 +80,18 @@ class ManagerTravelRequestSerializer(serializers.ModelSerializer):
  
     class Meta:
         model = TravelRequest
-        fields = ['id', 'employee_name', 'status']
+        fields = "__all__"
  
  
 class TravelRequestSerializer(serializers.ModelSerializer):
     """Serializer for travel requests ensuring correct reference handling"""
     employee = serializers.PrimaryKeyRelatedField(queryset=Employee.objects.all())
-    manager = serializers.PrimaryKeyRelatedField(queryset=Manager.objects.all())
+    # manager = serializers.PrimaryKeyRelatedField(queryset=Manager.objects.all())
+    manager = ManagerSerializer()
 
     class Meta:
         model = TravelRequest
         fields = [
             'id', 'employee', 'manager', 'from_location', 'to_location',
-            'start_date', 'end_date', 'status', 'is_closed', 'additional_notes','travel_mode'
+            'start_date', 'end_date', 'status', 'is_closed', 'additional_notes','travel_mode','purpose_of_travel','hotel_preference','lodging_required'
         ]

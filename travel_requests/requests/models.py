@@ -97,8 +97,9 @@ class TravelRequest(models.Model):
     hotel_preference = models.CharField(max_length=100, blank=True, null=True)
     lodging_required = models.BooleanField(default=False)
     is_closed = models.BooleanField(default=False)
-    is_resubmitted = models.BooleanField(default=False)
+    is_resubmitted = models.BooleanField(default=False) 
     resubmitted_date = models.DateField(null=True, blank=True)
+    purpose_of_travel = models.CharField(max_length=100, blank=True, null=True)
 
     def __str__(self):
         return f"Travel Request from {self.from_location} to {self.to_location} ({self.status})"

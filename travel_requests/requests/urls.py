@@ -15,11 +15,12 @@ urlpatterns = [
 
     #manager apis
     path('manager/view-requests/',views.manager_view_requests, name="manager_view_requests"), # manager view all requests
+    path('manager/view-request/<int:request_id>/',views.manager_view_request_by_id, name="manager_view_requests"),
     path('manager/filter-sort-requests/',views.manager_filter_sort_requests, name="manager_view_requests"), # manager filter and sort requests
     path('manager/action/<int:request_id>/', views.manage_travel_request, name='manage_travel_request'), # manager approve or reject request
     path('manager/search/', views.manager_search_requests, name='manager-view-request'), # manager search requests
     path('manager/request-info/<int:request_id>/', views.manager_send_email, name='manager-view-request'), # manager send email request
-
+    
 
     #admin apis
      path('api/travel-requests/', views.get_travel_requests, name='travel-requests-list'),    # View all requests

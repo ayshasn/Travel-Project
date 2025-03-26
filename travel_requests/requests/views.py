@@ -16,13 +16,14 @@ from rest_framework import status
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.authentication import TokenAuthentication
-
+from . import serializers as serializer
  
  
  
 # Employee Dashboard
 @api_view(["GET"])
 @permission_classes([AllowAny]) 
+@permission_classes([IsAuthenticated])
 def employee_view_dashboard(request):
     """
     Retrieves all travel requests for the logged-in employee.
@@ -36,7 +37,7 @@ def employee_view_dashboard(request):
     """
     try:
         employee = Employee.objects.get(user_profile__user=request.user)  
-        travel_requests = TravelRequest.objects.filter(employee=employee)
+        travel_requests = TravelRequest.objects.filter(status__in=["pending","approved","rejected"], employee=employee)
         serializer = TravelRequestSerializer(travel_requests, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
     except Employee.DoesNotExist:
@@ -107,7 +108,7 @@ def employee_edit_request(request, request_id):
 
 
 # Cancel Travel Request (Only if not approved/rejected & is a past request)
-@api_view(["PUT"])
+@api_view(["DELETE"])
 @authentication_classes([TokenAuthentication])
 def employee_cancel_request(request, request_id):
     """
@@ -174,6 +175,8 @@ def employee_submit_request(request):
     # Validate date fields
     start_date = data.get("start_date")
     end_date = data.get("end_date")
+    print(start_date)
+    print(end_date)
 
     if not start_date or not end_date:
         return Response({"error": "Start date and end date are required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -261,37 +264,69 @@ def employee_resubmit_request(request, request_id):
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
 def manager_view_requests(request):
+    try:
+        manager_obj = Manager.objects.get(user_profile=request.user.profile)
+    except Manager.DoesNotExist:
+        return Response({"error": "Manager not found."}, status=404)
+
+    # Use a separate variable for the queryset
+    query = TravelRequest.objects.filter(manager=manager_obj)
+
+    # Get filters from request query parameters
+    search_employee = request.query_params.get('search')
+    status_filter = request.query_params.get("status")
+    date_sort = request.query_params.get("date_sort")
+    from_date = request.query_params.get("from")
+    to_date = request.query_params.get("to")
+
+    # Apply filters if they exist
+    if status_filter:
+        query = query.filter(status=status_filter)
+    if from_date and to_date:
+        query = query.filter(start_date__date__range=(from_date, to_date))
+    if date_sort == "asc":
+        query = query.order_by("start_date")
+    elif date_sort == "desc":
+        query = query.order_by("-start_date")
+    if search_employee:
+        query = query.filter(employee__first_name__icontains=search_employee)
+
+    # Serialize the filtered data
+    serialized_query = serializer.ManagerTravelRequestSerializer(query, many=True)
+    return Response(serialized_query.data, HTTP_200_OK)
+
+
+
+@api_view(['GET'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def manager_view_request_by_id(request, request_id):
     """
-    Retrieves all travel requests assigned to the logged-in manager.
-
-    This function fetches and returns all travel requests where the manager is responsible 
-    for reviewing and approving them.
-
-    Args:
-        request (HttpRequest): The request object from the authenticated manager.
-
-    Returns:
-        Response (JSON): A list of travel requests with their details.
-            - HTTP 200: Successfully retrieved requests.
+    API for manager to fetch full details of a single travel request.
     """
-    requests = TravelRequest.objects.all()
+    try:
+        travel_request = TravelRequest.objects.get(id=request_id)
+    except TravelRequest.DoesNotExist:
+        return Response({"error": "Travel request not found."}, status=404)
 
-    data = [{
-        'id': req.id,
-        'employee': req.employee.first_name,
-        'from_location': req.from_location,
-        'to_location': req.to_location,
-        'status': req.status,
-        'start_date': req.start_date.strftime("%Y-%m-%d"),
-        'end_date': req.end_date.strftime("%Y-%m-%d"),
-    } for req in requests]
-
-    return Response(data, status=HTTP_200_OK)
-
-
-from django.db.models import Q
-
-from django.utils.dateparse import parse_date
+    data = {
+        "id": travel_request.id,
+        "employee": {
+            "first_name": travel_request.employee.first_name,
+            "last_name": travel_request.employee.last_name,
+        },
+        "from_location": travel_request.from_location,
+        "to_location": travel_request.to_location,
+        "start_date": travel_request.start_date.strftime("%Y-%m-%d"),
+        "end_date": travel_request.end_date.strftime("%Y-%m-%d"),
+        "lodging_required": travel_request.lodging_required,
+        "hotel_preference": travel_request.hotel_preference,
+        "travel_mode": travel_request.travel_mode,
+        "purpose_of_travel": travel_request.purpose_of_travel,
+        "status": travel_request.status,
+        "additional_request": travel_request.additional_notes,
+    }
+    return Response(data, status=200)
 
 
 @api_view(['GET'])
@@ -323,11 +358,13 @@ def manager_filter_sort_requests(request):
     end_date_str = request.GET.get('end_date')
     employee_name = request.GET.get('employee_name')
     status_filter = request.GET.get('status')
-    sort_by = request.GET.get('sort_by', 'start_date')
-    sort_order = request.GET.get('sort_order', 'asc')
+    sort_order = request.GET.get('sort_order') 
 
-    start_date = parse_date(start_date_str) if start_date_str else None
-    end_date = parse_date(end_date_str) if end_date_str else None
+    # start_date = parse_date(start_date_str) if start_date_str else None
+    # end_date = parse_date(end_date_str) if end_date_str else None
+
+    start_date = '2002-01-01'
+    end_date = '2022-02-02'
 
     if start_date_str and not start_date:
         return Response({"error": "Invalid start_date format. Use YYYY-MM-DD."}, status=HTTP_400_BAD_REQUEST)
@@ -340,7 +377,7 @@ def manager_filter_sort_requests(request):
         if start_date > end_date:
             return Response({"error": "Start date cannot be greater than end date."}, status=HTTP_400_BAD_REQUEST)
 
-        requests = requests.filter(
+    requests = requests.filter(
             start_date__gte=start_date, 
             end_date__lte=end_date     
         )
@@ -350,9 +387,10 @@ def manager_filter_sort_requests(request):
 
     if status_filter:
         requests = requests.filter(status=status_filter)
-
+    sort_by = start_date
     if sort_order == 'desc':
         sort_by = f'-{sort_by}'
+
     requests = requests.order_by(sort_by)
     data = [{
         'id': req.id,
@@ -360,8 +398,8 @@ def manager_filter_sort_requests(request):
         'from_location': req.from_location,
         'to_location': req.to_location,
         'status': req.status,
-        'start_date': req.start_date.strftime("%Y-%m-%d"),
-        'end_date': req.end_date.strftime("%Y-%m-%d"),
+        'start_date': req.start_date.strftime("%d-%m-%Y"),
+        'end_date': req.end_date.strftime("%d-%m-%Y"),
     } for req in requests]
 
     return Response(data, status=HTTP_200_OK)
@@ -635,50 +673,38 @@ def update_user(request, user_id):
         return Response({"error": "User not found."}, status=HTTP_404_NOT_FOUND)
     
 @api_view(['PUT'])
-@authentication_classes([TokenAuthentication])
+@authentication_classes([TokenAuthentication])  
 @permission_classes([IsAuthenticated])
 def manage_travel_request(request, request_id):
-    """
-    Allows a manager to approve or reject a travel request.
-
-    The manager can update the status of a travel request to either "Approved" or "Rejected."
-    An optional rejection reason can also be provided.
-
-    Expected request body:
-        {
-            "action": "approve" / "reject",
-            "reason": "Optional reason for rejection"
-        }
-
-    Args:
-        request (HttpRequest): The request object containing the manager's decision.
-        request_id (int): The ID of the travel request to be updated.
-
-    Returns:
-        Response (JSON): A success message or an error message.
-            - HTTP 200: Request successfully approved or rejected.
-            - HTTP 400: Invalid action provided.
-            - HTTP 404: Travel request not found.
-    """
     try:
         travel_request = TravelRequest.objects.get(id=request_id)
         action = request.data.get("action")
+        manager_note = request.data.get("managerNote")  # from frontend
 
         if action == "approve":
             travel_request.status = "Approved"
         elif action == "reject":
             travel_request.status = "Rejected"
+        elif action == "update":
+            # Optional update without status change
+            pass
         else:
             return Response({"error": "Invalid action."}, status=HTTP_400_BAD_REQUEST)
 
+        # ✅ Correct field update
+        travel_request.manager_notes = manager_note   
         travel_request.save()
+
         return Response({
             "message": f"Request {action} successfully!",
             "status": travel_request.status,
+            "manager_notes": travel_request.manager_notes,
         }, status=HTTP_200_OK)
 
     except TravelRequest.DoesNotExist:
         return Response({"error": "Travel request not found."}, status=HTTP_404_NOT_FOUND)
+
+
 
  
 @api_view(['DELETE'])
@@ -686,7 +712,7 @@ def manage_travel_request(request, request_id):
 def delete_user(request, user_id):
     """
     Deletes an employee or manager from the system.
-
+    
     This function removes a user based on the provided user ID.
     Only authenticated users with the necessary permissions can perform this action.
 
@@ -930,64 +956,49 @@ def admin_login(request):
 def user_login(request):
     """
     Authenticates a manager or employee and generates an authentication token.
-
-    The function verifies the provided username and password. If authentication is 
-    successful, it checks the user's role and returns a token.
-
-    Expected request body:
-        {
-            "username": "user_username",
-            "password": "user_password"
-        }
-
-    Args:
-        request (HttpRequest): The request object containing the user's login credentials.
-
-    Returns:
-        Response (JSON): A success message with a token or an error message.
-            - HTTP 200: Login successful, token provided.
-            - HTTP 400: Missing username or password.
-            - HTTP 401: Invalid credentials.
-            - HTTP 403: Unauthorized role (not a manager or employee).
-            - HTTP 404: User profile not found.
+    Validates the role based on the expected role passed from the frontend.
     """
     username = request.data.get('username')
     password = request.data.get('password')
- 
-    if not username or not password:
-        return Response({"error": "Username and password are required."}, status=status.HTTP_400_BAD_REQUEST)
- 
+    expected_role = request.data.get("expected_role")  # 'employee' or 'manager'
+
+    if not username or not password or not expected_role:
+        return Response({"error": "Username, password, and expected role are required."}, status=status.HTTP_400_BAD_REQUEST)
+
     user = authenticate(username=username, password=password)
- 
+
     if user is None:
         return Response({"error": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
 
     user_profile = UserProfile.objects.filter(user=user).first()
-   
+
     if not user_profile:
         return Response({"error": "User profile not found in the database."}, status=status.HTTP_404_NOT_FOUND)
- 
+
     role = user_profile.role
- 
-    if role not in ["manager", "employee"]:
-        return Response({"error": "Unauthorized user role."}, status=status.HTTP_403_FORBIDDEN)
- 
+
+    # ✅ Role check added here
+    if role != expected_role:
+        return Response({"error": f"Access denied! This is a {expected_role} portal."}, status=status.HTTP_403_FORBIDDEN)
+
     token, created = Token.objects.get_or_create(user=user)
- 
+
     return Response({
         "message": "Login successful",
         "token": token.key,
         "role": role,
-        "status": user_profile.status
+        "status": user_profile.status,
+        "username": user.username
     }, status=status.HTTP_200_OK)
+
  
- 
+    
  
 @api_view(['POST'])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
 def user_logout(request):
-    """
+    """````````````````````````````````````````````
     Logs out the authenticated user by deleting their authentication token.
 
     This function ensures that the user's token is removed, effectively logging them out 
